@@ -101,6 +101,62 @@ type Ethereum struct {
 	shutdownTracker *shutdowncheck.ShutdownTracker // Tracks if and when the node has shutdown ungracefully
 }
 
+func NewNaiveEthereum(blockchain *core.BlockChain, chainDb ethdb.Database, node *node.Node, config *ethconfig.Config, txPool *txpool.TxPool, engine consensus.Engine) *Ethereum { 
+  eth := &Ethereum{                                                                                                                               
+    blockchain: blockchain,                                                                                                                           
+    merger: consensus.NewMerger(chainDb), //TODO: Whats this
+    networkID: 505, //TODO
+    chainDb:    chainDb, //TODO: naive db?                                                                                                            
+    accountManager: node.AccountManager(),
+    eventMux:       node.EventMux(), //TODO
+    txPool: txPool,
+    config: config,
+    engine: engine,
+    p2pServer: node.Server(), //TODO
+		shutdownTracker:   shutdowncheck.NewShutdownTracker(chainDb), //TODO
+    gasPrice: config.Miner.GasPrice, //TODO
+    etherbase: config.Miner.Etherbase, //TODO
+  }
+
+  eth.APIBackend = &EthAPIBackend{node.Config().ExtRPCEnabled(), node.Config().AllowUnprotectedTxs, eth, nil}
+  gpoParams := config.GPO
+  if gpoParams.Default == nil {
+    gpoParams.Default = config.Miner.GasPrice
+  }
+  eth.APIBackend.gpo = gasprice.NewOracle(eth.APIBackend, gpoParams)
+
+  //cacheLimit := cacheConfig.TrieCleanLimit + cacheConfig.TrieDirtyLimit + cacheConfig.SnapshotLimit
+  checkpoint := config.Checkpoint
+  if checkpoint == nil {
+    checkpoint = params.TrustedCheckpoints[eth.blockchain.Genesis().Hash()]
+  }
+  var err error
+  if eth.handler, err = newHandler(&handlerConfig{
+    Database:       chainDb,
+    Chain:          eth.blockchain,
+    TxPool:         eth.txPool,
+    Merger:         eth.merger,
+    Network:        config.NetworkId,
+    Sync:           config.SyncMode,
+    BloomCache:     uint64(2048),
+    EventMux:       eth.eventMux,
+    Checkpoint:     checkpoint,
+    RequiredBlocks: config.RequiredBlocks,
+  }); err != nil {
+    log.Crit("Failed to create new handler", "err", err)
+    return nil
+  }
+
+  eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
+  eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
+
+  return eth
+}
+
+func GetNaiveEthAPIs(eth *Ethereum) []rpc.API {
+  return ethapi.GetAPIs(eth.APIBackend)
+}
+
 // New creates a new Ethereum object (including the
 // initialisation of the common Ethereum object)
 func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
