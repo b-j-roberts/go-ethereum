@@ -150,7 +150,51 @@ func NewNaiveEthereum(blockchain *core.BlockChain, chainDb ethdb.Database, node 
   eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
   eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
+  dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
+  eth.ethDialCandidates, err = dnsclient.NewIterator(eth.config.EthDiscoveryURLs...)
+  if err != nil {
+    return nil
+  }
+  eth.snapDialCandidates, err = dnsclient.NewIterator(eth.config.SnapDiscoveryURLs...)
+  if err != nil {
+    return nil
+  }
+
+  eth.netRPCService = ethapi.NewNetAPI(eth.p2pServer, config.NetworkId)
+  eth.shutdownTracker.MarkStartup()
+
   return eth
+}
+
+// Start Naive node stuff
+func (s *Ethereum) StartNaive() error {
+  eth.StartENRUpdater(s.blockchain, s.p2pServer.LocalNode())
+
+  s.startBloomHandlers(params.BloomBitsBlocks)
+  s.shutdownTracker.Start()
+
+  maxPeers := s.p2pServer.MaxPeers
+  s.handler.Start(maxPeers)
+
+  return nil
+}
+
+func (s *Ethereum) StopNaive() error {
+  s.ethDialCandidates.Close()
+  s.snapDialCandidates.Close()
+  s.handler.Stop()
+
+  s.bloomIndexer.Close()
+  close(s.closeBloomHandler)
+  s.txPool.Stop()
+  s.miner.Close()
+  s.blockchain.Stop()
+  s.engine.Close()
+  s.shutdownTracker.Stop()
+  s.chainDb.Close()
+  s.eventMux.Stop()
+
+  return nil
 }
 
 func GetNaiveEthAPIs(eth *Ethereum) []rpc.API {
