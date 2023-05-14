@@ -198,7 +198,25 @@ func (s *Ethereum) StopNaive() error {
 }
 
 func GetNaiveEthAPIs(eth *Ethereum) []rpc.API {
-  return ethapi.GetAPIs(eth.APIBackend)
+  apis := ethapi.GetAPIs(eth.APIBackend)
+      
+  // Append any APIs exposed explicitly by the consensus engine
+  apis = append(apis, eth.engine.APIs(eth.BlockChain())...)
+  
+  // Append all the local APIs and return
+  return append(apis, []rpc.API{
+    {
+      Namespace: "miner",                                                 
+      Service:   NewMinerAPI(eth),
+    }, {
+      Namespace: "eth",
+      Service:   downloader.NewDownloaderAPI(eth.handler.downloader, eth.eventMux),
+    }, {
+      Namespace: "net",
+      Service:   eth.netRPCService,
+    },
+  }...)
+  return apis
 }
 
 // New creates a new Ethereum object (including the
