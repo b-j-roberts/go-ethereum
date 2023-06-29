@@ -35,6 +35,8 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
+
+	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
 const (
@@ -188,6 +190,25 @@ type intervalAdjust struct {
 	inc   bool
 }
 
+type L1BridgeEngine struct {
+  L1BridgeComms *l2utils.L1BridgeComms
+  //TODO: Value tracker to prevent double
+}
+
+//TODO: common address to pointer
+func NewL1BridgeEngine(url string, addr common.Address, sequencer common.Address) *L1BridgeEngine {
+  bridgeComms, err := l2utils.NewL1BridgeComms(url, addr)
+  if err != nil {
+    panic(err)
+  }
+
+  bridgeComms.RegisterL1Address(sequencer, "~/naive-sequencer/keystore/")
+
+  return &L1BridgeEngine{
+    L1BridgeComms: bridgeComms,
+  }
+}
+
 // worker is the main object which takes care of submitting new work to consensus engine
 // and gathering the sealing result.
 type worker struct {
@@ -260,6 +281,8 @@ type worker struct {
 	// payload in proof-of-stake stage.
 	recommit time.Duration
 
+  l1BridgeEngine *L1BridgeEngine
+
 	// External functions
 	isLocalBlock func(header *types.Header) bool // Function used to determine whether the specified block is mined by local miner.
 
@@ -270,7 +293,7 @@ type worker struct {
 	resubmitHook func(time.Duration, time.Duration) // Method to call upon updating resubmitting interval.
 }
 
-func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool) *worker {
+func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus.Engine, eth Backend, mux *event.TypeMux, isLocalBlock func(header *types.Header) bool, init bool, l1BridgeEngine *L1BridgeEngine) *worker {
 	worker := &worker{
 		config:             config,
 		chainConfig:        chainConfig,
@@ -281,7 +304,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		isLocalBlock:       isLocalBlock,
 		localUncles:        make(map[common.Hash]*types.Block),
 		remoteUncles:       make(map[common.Hash]*types.Block),
-		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), sealingLogAtDepth),
+		unconfirmed:        newUnconfirmedBlocks(eth.BlockChain(), sealingLogAtDepth, l1BridgeEngine),
 		coinbase:           config.Etherbase,
 		extra:              config.ExtraData,
 		pendingTasks:       make(map[common.Hash]*task),
@@ -296,6 +319,7 @@ func newWorker(config *Config, chainConfig *params.ChainConfig, engine consensus
 		exitCh:             make(chan struct{}),
 		resubmitIntervalCh: make(chan time.Duration),
 		resubmitAdjustCh:   make(chan *intervalAdjust, resubmitAdjustChanSize),
+    l1BridgeEngine:     l1BridgeEngine,
 	}
 	// Subscribe NewTxsEvent for tx pool
 	worker.txsSub = eth.TxPool().SubscribeNewTxsEvent(worker.txsCh)

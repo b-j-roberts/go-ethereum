@@ -2,6 +2,8 @@ module github.com/ethereum/go-ethereum
 
 go 1.19
 
+require github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2 v0.0.0-20230525205546-068f8248dbce
+
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v0.3.0
 	github.com/VictoriaMetrics/fastcache v1.6.0
@@ -125,3 +127,5 @@ require (
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
+
+replace github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2 => ../../naive-cryptocurrency-l2

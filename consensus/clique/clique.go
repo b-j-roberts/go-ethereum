@@ -19,6 +19,7 @@ package clique
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +44,9 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
+
+	"github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
+	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
 const (
@@ -184,6 +188,8 @@ type Clique struct {
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
+
+  L1BridgeComms *utils.L1BridgeComms
 }
 
 // New creates a Clique proof-of-authority consensus engine with the initial
@@ -198,12 +204,18 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
 
+  l1BridgeComms, err := l2utils.NewL1BridgeComms(config.L1Url, common.HexToAddress(config.L1BridgeAddress))
+  if err != nil {
+    log.Info("Failed to create L1BridgeComms", "err", err)
+  }
+
 	return &Clique{
 		config:     &conf,
 		db:         db,
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
+    L1BridgeComms: l1BridgeComms,
 	}
 }
 
@@ -568,6 +580,68 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 // consensus rules in clique, do nothing here.
 func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
 	// No block rewards in PoA, so the state remains as is
+
+  var blockInterval uint64 = 10
+
+  // Now every `blockInterval` blocks, we check for any L1 Bridge deposits
+  if header.Number.Uint64() % blockInterval == 0 {
+    log.Info("Checking for L1 Bridge deposits")
+
+    //TODO: Use a better alg to find the starting block
+    var checkLength = blockInterval * 3
+    if header.Number.Uint64() < checkLength {
+      checkLength = header.Number.Uint64()
+    }
+    var startingL1BlockNumber uint64 = header.Number.Uint64() - checkLength
+
+    log.Info("Looping through L1 blocks", "start", startingL1BlockNumber, "end", startingL1BlockNumber + checkLength)
+    for i := startingL1BlockNumber; i < startingL1BlockNumber + checkLength; i++ {
+      block, err := c.L1BridgeComms.L1Client.BlockByNumber(context.Background(), big.NewInt(int64(i)));
+      if err != nil {
+        log.Error("Error getting L1 block", "err", err)
+        return
+      }
+
+      if block != nil {
+        for _, tx := range block.Transactions() {
+          receipt, err := c.L1BridgeComms.L1Client.TransactionReceipt(context.Background(), tx.Hash())
+          if err != nil {
+            log.Error("Error getting L1 transaction receipt", "err", err)
+            return
+          }
+
+          eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
+          for _, receiptLog := range receipt.Logs {
+            // Check if this is a deposit log
+            if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == c.L1BridgeComms.L1BridgeContractAddress {
+              // TEMP: Add balance to state
+              bridgeDeposit, err := c.L1BridgeComms.L1BridgeContract.ParseEthDeposited(*receiptLog)
+              if err != nil {
+                log.Error("Error parsing L1 deposit event", "err", err)
+                return
+              }
+
+              // Compare if nonce is greater than engine nonce ( comparing 2 big ints )
+              if state.GetNonce(common.HexToAddress("0x505")) < bridgeDeposit.Nonce.Uint64() {
+                if state.GetNonce(common.HexToAddress("0x505")) + 1 != bridgeDeposit.Nonce.Uint64() {
+                  log.Error("Nonce is not correct", "state", state.GetNonce(common.HexToAddress("0x505")), "nonce", bridgeDeposit.Nonce.Uint64())
+                  return
+                }
+
+                log.Info("Bridging Eth to L2", "amount", bridgeDeposit.Amount, "nonce", bridgeDeposit.Nonce.Uint64())
+                // Update nonce
+                state.AddBalance(bridgeDeposit.Addr, bridgeDeposit.Amount)
+                state.SetNonce(common.HexToAddress("0x505"), bridgeDeposit.Nonce.Uint64())
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Set balance of bridge contract to 0 ( so we don't double count )
+  state.SetBalance(common.HexToAddress("0x505"), big.NewInt(0))
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,

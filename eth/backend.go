@@ -101,7 +101,13 @@ type Ethereum struct {
 	shutdownTracker *shutdowncheck.ShutdownTracker // Tracks if and when the node has shutdown ungracefully
 }
 
-func NewNaiveEthereum(blockchain *core.BlockChain, chainDb ethdb.Database, node *node.Node, config *ethconfig.Config, txPool *txpool.TxPool, engine consensus.Engine) *Ethereum { 
+type L1BridgeConfig struct {
+  L1BridgeAddress common.Address
+  L1BridgeUrl string
+  SequencerAddr common.Address
+}
+
+func NewNaiveEthereum(blockchain *core.BlockChain, chainDb ethdb.Database, node *node.Node, config *ethconfig.Config, txPool *txpool.TxPool, engine consensus.Engine, l1BridgeConfig *L1BridgeConfig) *Ethereum {
   eth := &Ethereum{                                                                                                                               
     blockchain: blockchain,                                                                                                                           
     merger: consensus.NewMerger(chainDb), //TODO: Whats this
@@ -147,7 +153,7 @@ func NewNaiveEthereum(blockchain *core.BlockChain, chainDb ethdb.Database, node 
     return nil
   }
 
-  eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
+  eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock, miner.NewL1BridgeEngine(l1BridgeConfig.L1BridgeUrl, l1BridgeConfig.L1BridgeAddress, l1BridgeConfig.SequencerAddr))
   eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
   dnsclient := dnsdisc.NewClient(dnsdisc.Config{})
@@ -348,7 +354,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		return nil, err
 	}
 
-	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock)
+	eth.miner = miner.New(eth, &config.Miner, eth.blockchain.Config(), eth.EventMux(), eth.engine, eth.isLocalBlock, nil)
 	eth.miner.SetExtra(makeExtraData(config.Miner.ExtraData))
 
 	eth.APIBackend = &EthAPIBackend{stack.Config().ExtRPCEnabled(), stack.Config().AllowUnprotectedTxs, eth, nil}
