@@ -45,7 +45,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
 
-	"github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
@@ -189,7 +188,7 @@ type Clique struct {
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
 
-  L1BridgeComms *utils.L1BridgeComms
+  l1Comms *l2utils.L1Comms
 }
 
 // New creates a Clique proof-of-authority consensus engine with the initial
@@ -204,7 +203,10 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
 
-  l1BridgeComms, err := l2utils.NewL1BridgeComms(config.L1Url, common.HexToAddress(config.L1BridgeAddress))
+  l1Comms, err := l2utils.NewL1Comms(config.L1Url, common.HexToAddress("0x0"), common.HexToAddress(config.L1BridgeAddress), big.NewInt(505), l2utils.L1TransactionConfig{ //TODO: Hardcoded
+    GasLimit: 3000000,
+    GasPrice: big.NewInt(200),
+  })
   if err != nil {
     log.Info("Failed to create L1BridgeComms", "err", err)
   }
@@ -215,7 +217,7 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
-    L1BridgeComms: l1BridgeComms,
+    l1Comms:    l1Comms,
 	}
 }
 
@@ -596,7 +598,7 @@ func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 
     log.Info("Looping through L1 blocks", "start", startingL1BlockNumber, "end", startingL1BlockNumber + checkLength)
     for i := startingL1BlockNumber; i < startingL1BlockNumber + checkLength; i++ {
-      block, err := c.L1BridgeComms.L1Client.BlockByNumber(context.Background(), big.NewInt(int64(i)));
+      block, err := c.l1Comms.L1Client.BlockByNumber(context.Background(), big.NewInt(int64(i)));
       if err != nil {
         log.Error("Error getting L1 block", "err", err)
         return
@@ -604,7 +606,7 @@ func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
 
       if block != nil {
         for _, tx := range block.Transactions() {
-          receipt, err := c.L1BridgeComms.L1Client.TransactionReceipt(context.Background(), tx.Hash())
+          receipt, err := c.l1Comms.L1Client.TransactionReceipt(context.Background(), tx.Hash())
           if err != nil {
             log.Error("Error getting L1 transaction receipt", "err", err)
             return
@@ -613,9 +615,9 @@ func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
           eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
           for _, receiptLog := range receipt.Logs {
             // Check if this is a deposit log
-            if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == c.L1BridgeComms.L1BridgeContractAddress {
+            if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == c.l1Comms.BridgeContractAddress {
               // TEMP: Add balance to state
-              bridgeDeposit, err := c.L1BridgeComms.L1BridgeContract.ParseEthDeposited(*receiptLog)
+              bridgeDeposit, err := c.l1Comms.BridgeContract.ParseEthDeposited(*receiptLog)
               if err != nil {
                 log.Error("Error parsing L1 deposit event", "err", err)
                 return

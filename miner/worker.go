@@ -191,18 +191,21 @@ type intervalAdjust struct {
 }
 
 type L1BridgeEngine struct {
-  L1BridgeComms *l2utils.L1BridgeComms
+  L1BridgeComms *l2utils.L1Comms
   //TODO: Value tracker to prevent double
 }
 
 //TODO: common address to pointer
 func NewL1BridgeEngine(url string, addr common.Address, sequencer common.Address) *L1BridgeEngine {
-  bridgeComms, err := l2utils.NewL1BridgeComms(url, addr)
+  bridgeComms, err := l2utils.NewL1Comms(url, common.HexToAddress("0x0"), addr, big.NewInt(505), l2utils.L1TransactionConfig{
+    GasLimit: 3000000,
+    GasPrice: big.NewInt(200),
+  })
   if err != nil {
     panic(err)
   }
 
-  bridgeComms.RegisterL1Address(sequencer, "~/naive-sequencer/keystore/")
+  l2utils.RegisterAccount(sequencer, "~/naive-sequencer/keystore/")
 
   return &L1BridgeEngine{
     L1BridgeComms: bridgeComms,
