@@ -108,7 +108,7 @@ func (set *unconfirmedBlocks) Shift(height uint64) {
 		case header.Hash() == next.hash:
 			log.Info("🔗 block reached canonical chain", "number", next.index, "hash", next.hash)
 
-      //TODO: sequencer only
+      //TODO: remove this stuff now that bridge changed
       // Now we can safely bridge eth to L1 without risk of reorg causing double spend
       if set.l1BridgeEngine != nil {
         block := set.chain.GetBlockByNumber(header.Number.Uint64())
@@ -119,7 +119,7 @@ func (set *unconfirmedBlocks) Shift(height uint64) {
 
         for _, tx := range block.Transactions() {
           // Check if tx is a bridge tx : ie sent to bridge account
-          if *tx.To() == common.HexToAddress("0x505") {
+          if tx.To() != nil && *tx.To() == common.HexToAddress("0x505") {
             // Get tx sender / from address
             from, err := types.Sender(types.NewEIP155Signer(tx.ChainId()), tx)
             if err != nil {

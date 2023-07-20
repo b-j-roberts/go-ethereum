@@ -305,6 +305,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	}
 	// Make sure the state associated with the block is available
 	head := bc.CurrentBlock()
+  log.Info("Head block after load :", "number", head.Number, "hash", head.Hash(), "root", head.Root)
 	if !bc.HasState(head.Root) {
 		// Head state is missing, before the state recovery, find out the
 		// disk layer point of snapshot(if it's enabled). Make sure the

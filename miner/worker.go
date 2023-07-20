@@ -997,6 +997,7 @@ type generateParams struct {
 // either based on the last chain head or specified parent. In this function
 // the pending transactions are not filled yet, only the empty task returned.
 func (w *worker) prepareWork(genParams *generateParams) (*environment, error) {
+  log.Info("Preparing work")
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 
@@ -1125,6 +1126,7 @@ func (w *worker) generateWork(params *generateParams) (*types.Block, *big.Int, e
 			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(w.newpayloadTimeout))
 		}
 	}
+  log.Info("Finalizing and assembling block", "number", work.header.Number, "hash", work.header.Hash())
 	block, err := w.engine.FinalizeAndAssemble(w.chain, work.header, work.state, work.txs, work.unclelist(), work.receipts, params.withdrawals)
 	if err != nil {
 		return nil, nil, err

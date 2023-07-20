@@ -375,12 +375,15 @@ func (t *Tree) Update(blockRoot common.Hash, parentRoot common.Hash, destructs m
 // we want to ensure that *at least* the requested number of diff layers remain.
 func (t *Tree) Cap(root common.Hash, layers int) error {
 	// Retrieve the head snapshot to cap from
+  log.Info("Cap snapshot", "root", root, "layers", layers)
 	snap := t.Snapshot(root)
 	if snap == nil {
+    log.Error("Cap snapshot error 1", "root", root, "layers", layers)
 		return fmt.Errorf("snapshot [%#x] missing", root)
 	}
 	diff, ok := snap.(*diffLayer)
 	if !ok {
+    log.Error("Cap snapshot error 2", "root", root, "layers", layers)
 		return fmt.Errorf("snapshot [%#x] is disk layer", root)
 	}
 	// If the generator is still running, use a more aggressive cap
@@ -407,6 +410,7 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 		t.layers = map[common.Hash]snapshot{base.root: base}
 		return nil
 	}
+  log.Info("Persisted", "diff layers", layers)
 	persisted := t.cap(diff, layers)
 
 	// Remove any layer that is stale or links into a stale layer
@@ -419,6 +423,7 @@ func (t *Tree) Cap(root common.Hash, layers int) error {
 	}
 	var remove func(root common.Hash)
 	remove = func(root common.Hash) {
+    log.Info("Remove snapshot", "root", root)
 		delete(t.layers, root)
 		for _, child := range children[root] {
 			remove(child)
@@ -462,9 +467,11 @@ func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
 	for i := 0; i < layers-1; i++ {
 		// If we still have diff layers below, continue down
 		if parent, ok := diff.parent.(*diffLayer); ok {
+      log.Info("Cap snapshot lower", "diff", parent, "layers", i)
 			diff = parent
 		} else {
 			// Diff stack too shallow, return without modifications
+      log.Info("Cap snapshot lower failed", "layers", i)
 			return nil
 		}
 	}
@@ -521,6 +528,7 @@ func (t *Tree) cap(diff *diffLayer, layers int) *diskLayer {
 // The disk layer persistence should be operated in an atomic way. All updates should
 // be discarded if the whole transition if not finished.
 func diffToDisk(bottom *diffLayer) *diskLayer {
+  log.Debug("diffToDisk", "bottom", bottom.root, "memory", bottom.memory, "stale", bottom.stale)
 	var (
 		base  = bottom.parent.(*diskLayer)
 		batch = base.diskdb.NewBatch()

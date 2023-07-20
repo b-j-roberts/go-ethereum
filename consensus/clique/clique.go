@@ -19,10 +19,11 @@ package clique
 
 import (
 	"bytes"
-	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -37,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -44,8 +46,6 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
-
-	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
 const (
@@ -187,13 +187,13 @@ type Clique struct {
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
-
-  l1Comms *l2utils.L1Comms
+  L2BridgeContractAddress common.Address
 }
 
 // New creates a Clique proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
+//TODO: Use real backend?
+func New(config *params.CliqueConfig, db ethdb.Database, backend *ethclient.Client) *Clique {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	if conf.Epoch == 0 {
@@ -203,21 +203,12 @@ func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	recents := lru.NewCache[common.Hash, *Snapshot](inmemorySnapshots)
 	signatures := lru.NewCache[common.Hash, common.Address](inmemorySignatures)
 
-  l1Comms, err := l2utils.NewL1Comms(config.L1Url, common.HexToAddress("0x0"), common.HexToAddress(config.L1BridgeAddress), big.NewInt(505), l2utils.L1TransactionConfig{ //TODO: Hardcoded
-    GasLimit: 3000000,
-    GasPrice: big.NewInt(200),
-  })
-  if err != nil {
-    log.Info("Failed to create L1BridgeComms", "err", err)
-  }
-
 	return &Clique{
 		config:     &conf,
 		db:         db,
 		recents:    recents,
 		signatures: signatures,
 		proposals:  make(map[common.Address]bool),
-    l1Comms:    l1Comms,
 	}
 }
 
@@ -580,70 +571,75 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 // Finalize implements consensus.Engine. There is no post-transaction
 // consensus rules in clique, do nothing here.
-func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
-	// No block rewards in PoA, so the state remains as is
+func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal, receipts []*types.Receipt) {
 
-  var blockInterval uint64 = 10
+  log.Info("Checking for L1 Bridge deposits")
 
-  // Now every `blockInterval` blocks, we check for any L1 Bridge deposits
-  if header.Number.Uint64() % blockInterval == 0 {
-    log.Info("Checking for L1 Bridge deposits")
+  //TODO: This is a hack, but it will allow the chain to continue for now when bridge contract hasnt been setup
+  l2BridgeAddressFile := "/home/brandon/naive-sequencer-data/l2-bridge-address.txt" //TODO: Hardcoded
+  l2BridgeAddressBytes, err := ioutil.ReadFile(l2BridgeAddressFile)
+  if err != nil {
+    log.Error("Error reading L2 Bridge Address file %v", err)
 
-    //TODO: Use a better alg to find the starting block
-    var checkLength = blockInterval * 3
-    if header.Number.Uint64() < checkLength {
-      checkLength = header.Number.Uint64()
-    }
-    var startingL1BlockNumber uint64 = header.Number.Uint64() - checkLength
+    return
+  }
+  var l2BridgeAddressJSON map[string]interface{}
+  err = json.Unmarshal(l2BridgeAddressBytes, &l2BridgeAddressJSON)
+  if err != nil {
+    log.Error("Error unmarshalling L2 Bridge Address file %v", err)
+    return
+  }
+  l2BridgeAddress := common.HexToAddress(l2BridgeAddressJSON["address"].(string))
 
-    log.Info("Looping through L1 blocks", "start", startingL1BlockNumber, "end", startingL1BlockNumber + checkLength)
-    for i := startingL1BlockNumber; i < startingL1BlockNumber + checkLength; i++ {
-      block, err := c.l1Comms.L1Client.BlockByNumber(context.Background(), big.NewInt(int64(i)));
-      if err != nil {
-        log.Error("Error getting L1 block", "err", err)
-        return
-      }
+  for _, receipt := range receipts {
+    eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
+    for _, receiptLog := range receipt.Logs {
+      // Check if this is a deposit log
+      //TODO: THis is entirely separate, but think about how it would be possible to completely verify the chain with only data available on L1 ( roots every so often blocks & tx data , how would people know which blocks had which transactions, ...? )
+      log.Info("Checking if is EthDeopsited", "receipt log", receiptLog.Topics[0].Bytes(), "sig", eventSignature.Bytes(), "address", receiptLog.Address.Hex(), "bridge", l2BridgeAddress)
+      if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == l2BridgeAddress {
+        log.Info("Unpacking Eth Dep")
+        // TEMP: Add balance to state
+        nonce, addr, amount, err := UnpackEthDeposited(*receiptLog)
+        if err != nil {
+          log.Error("Error unpacking EthDeposited event", "err", err)
+          return
+        }
 
-      if block != nil {
-        for _, tx := range block.Transactions() {
-          receipt, err := c.l1Comms.L1Client.TransactionReceipt(context.Background(), tx.Hash())
-          if err != nil {
-            log.Error("Error getting L1 transaction receipt", "err", err)
+        log.Info("Unpacked Eth Dep", "nonce", nonce, "addr", addr.Hex(), "amount", amount)
+
+        // Compare if nonce is greater than engine nonce ( comparing 2 big ints )
+        if state.GetNonce(common.HexToAddress("0x505")) < nonce.Uint64() {
+          if state.GetNonce(common.HexToAddress("0x505")) + 1 != nonce.Uint64() {
+            log.Error("Nonce is not correct", "state", state.GetNonce(common.HexToAddress("0x505")), "nonce", nonce.Uint64())
             return
           }
 
-          eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
-          for _, receiptLog := range receipt.Logs {
-            // Check if this is a deposit log
-            if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == c.l1Comms.BridgeContractAddress {
-              // TEMP: Add balance to state
-              bridgeDeposit, err := c.l1Comms.BridgeContract.ParseEthDeposited(*receiptLog)
-              if err != nil {
-                log.Error("Error parsing L1 deposit event", "err", err)
-                return
-              }
-
-              // Compare if nonce is greater than engine nonce ( comparing 2 big ints )
-              if state.GetNonce(common.HexToAddress("0x505")) < bridgeDeposit.Nonce.Uint64() {
-                if state.GetNonce(common.HexToAddress("0x505")) + 1 != bridgeDeposit.Nonce.Uint64() {
-                  log.Error("Nonce is not correct", "state", state.GetNonce(common.HexToAddress("0x505")), "nonce", bridgeDeposit.Nonce.Uint64())
-                  return
-                }
-
-                log.Info("Bridging Eth to L2", "amount", bridgeDeposit.Amount, "nonce", bridgeDeposit.Nonce.Uint64())
-                // Update nonce
-                state.AddBalance(bridgeDeposit.Addr, bridgeDeposit.Amount)
-                state.SetNonce(common.HexToAddress("0x505"), bridgeDeposit.Nonce.Uint64())
-              }
-            }
-          }
+          log.Info("Bridging Eth to L2", "to", addr.Hex(), "amount", amount, "nonce", nonce.Uint64())
+          // Update nonce
+          state.AddBalance(addr, amount)
+          state.SetNonce(common.HexToAddress("0x505"), nonce.Uint64())
         }
       }
     }
   }
+}
 
-  // Set balance of bridge contract to 0 ( so we don't double count )
-  state.SetBalance(common.HexToAddress("0x505"), big.NewInt(0))
+func UnpackEthDeposited(receiptLog types.Log) (nonce *big.Int, addr common.Address, amount *big.Int, err error) {
+    data := receiptLog.Data
+    if len(data) < 10 {
+        err = fmt.Errorf("invalid data")
+        return
+    }
+
+    offset := 12
+    nonce = new(big.Int).SetBytes(data[:32])
+    addr = common.BytesToAddress(data[32:52+offset])
+    amount = new(big.Int).SetBytes(data[52+offset:84+offset])
+    log.Info("Unpacked Eth Deposit", "nonce", nonce, "addr", addr, "amount", amount)
+
+
+    return
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
@@ -652,12 +648,19 @@ func (c *Clique) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if len(withdrawals) > 0 {
 		return nil, errors.New("clique does not support withdrawals")
 	}
-	// Finalize block
-	c.Finalize(chain, header, state, txs, uncles, nil)
 
+	// Finalize block
+	c.Finalize(chain, header, state, txs, uncles, nil, receipts)
+
+  return c.Assemble(chain, state, header, txs, uncles, receipts)
+}
+
+func (c *Clique) Assemble(chain consensus.ChainHeaderReader,state *state.StateDB, header *types.Header, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
+  // Set balance of bridge contract to 0 ( so we don't double count )
+  // state.SetBalance(common.HexToAddress("0x0"), big.NewInt(0)) //TODO: To finalize w/ receipt?
+  state.SetBalance(common.HexToAddress("0x505"), big.NewInt(0))
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
-
 	// Assemble and return the final block for sealing.
 	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
 }

@@ -57,6 +57,7 @@ var (
 // and generation is continued in the background until done.
 func generateSnapshot(diskdb ethdb.KeyValueStore, triedb *trie.Database, cache int, root common.Hash) *diskLayer {
 	// Create a new disk layer with an initialized state marker at zero
+  log.Info("Generate Snapshot", "root", root)
 	var (
 		stats     = &generatorStats{start: time.Now()}
 		batch     = diskdb.NewBatch()
