@@ -196,8 +196,8 @@ type L1BridgeEngine struct {
 }
 
 //TODO: common address to pointer
-func NewL1BridgeEngine(url string, addr common.Address, sequencer common.Address) *L1BridgeEngine {
-  bridgeComms, err := l2utils.NewL1Comms(url, common.HexToAddress("0x0"), addr, big.NewInt(505), l2utils.L1TransactionConfig{
+func NewL1BridgeEngine(url string, bridge common.Address, tokenBridge common.Address, sequencer common.Address) *L1BridgeEngine {
+  bridgeComms, err := l2utils.NewL1Comms(url, common.HexToAddress("0x0"), bridge, tokenBridge, big.NewInt(505), l2utils.L1TransactionConfig{
     GasLimit: 3000000,
     GasPrice: big.NewInt(200),
   })
