@@ -576,7 +576,7 @@ func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
   log.Info("Checking for L1 Bridge deposits")
 
   //TODO: This is a hack, but it will allow the chain to continue for now when bridge contract hasnt been setup
-  l2BridgeAddressFile := "/home/brandon/naive-sequencer-data/l2-bridge-address.txt" //TODO: Hardcoded
+  l2BridgeAddressFile := c.config.ContractsPath + "/l2-bridge-address.txt"
   l2BridgeAddressBytes, err := ioutil.ReadFile(l2BridgeAddressFile)
   if err != nil {
     log.Error("Error reading L2 Bridge Address file %v", err)
