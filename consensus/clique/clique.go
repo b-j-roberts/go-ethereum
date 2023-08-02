@@ -19,11 +19,9 @@ package clique
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -46,6 +44,8 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
+
+	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
 const (
@@ -576,28 +576,13 @@ func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Heade
   log.Info("Checking for L1 Bridge deposits")
 
   //TODO: This is a hack, but it will allow the chain to continue for now when bridge contract hasnt been setup
-  l2BridgeAddressFile := c.config.ContractsPath + "/l2-bridge-address.txt"
-  l2BridgeAddressBytes, err := ioutil.ReadFile(l2BridgeAddressFile)
-  if err != nil {
-    log.Error("Error reading L2 Bridge Address file %v", err)
-
-    return
-  }
-  var l2BridgeAddressJSON map[string]interface{}
-  err = json.Unmarshal(l2BridgeAddressBytes, &l2BridgeAddressJSON)
-  if err != nil {
-    log.Error("Error unmarshalling L2 Bridge Address file %v", err)
-    return
-  }
-  l2BridgeAddress := common.HexToAddress(l2BridgeAddressJSON["address"].(string))
-
+  l2ContractAddresses := l2utils.CreateL2ContractAddressConfig(c.config.ContractsPath)
   for _, receipt := range receipts {
     eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
     for _, receiptLog := range receipt.Logs {
       // Check if this is a deposit log
       //TODO: THis is entirely separate, but think about how it would be possible to completely verify the chain with only data available on L1 ( roots every so often blocks & tx data , how would people know which blocks had which transactions, ...? )
-      log.Info("Checking if is EthDeopsited", "receipt log", receiptLog.Topics[0].Bytes(), "sig", eventSignature.Bytes(), "address", receiptLog.Address.Hex(), "bridge", l2BridgeAddress)
-      if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == l2BridgeAddress {
+      if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == l2ContractAddresses.BridgeContractAddress {
         log.Info("Unpacking Eth Dep")
         // TEMP: Add balance to state
         nonce, addr, amount, err := UnpackEthDeposited(*receiptLog)
