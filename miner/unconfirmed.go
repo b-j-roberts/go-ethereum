@@ -51,15 +51,13 @@ type unconfirmedBlocks struct {
 	depth  uint           // Depth after which to discard previous blocks
 	blocks *ring.Ring     // Block infos to allow canonical chain cross checks
 	lock   sync.Mutex     // Protects the fields from concurrent access
-  l1BridgeEngine *L1BridgeEngine
 }
 
 // newUnconfirmedBlocks returns new data structure to track currently unconfirmed blocks.
-func newUnconfirmedBlocks(chain chainRetriever, depth uint, l1BridgeEngine *L1BridgeEngine) *unconfirmedBlocks {
+func newUnconfirmedBlocks(chain chainRetriever, depth uint) *unconfirmedBlocks {
 	return &unconfirmedBlocks{
 		chain: chain,
 		depth: depth,
-    l1BridgeEngine: l1BridgeEngine,
 	}
 }
 
@@ -107,29 +105,6 @@ func (set *unconfirmedBlocks) Shift(height uint64) {
 			log.Warn("Failed to retrieve header of mined block", "number", next.index, "hash", next.hash)
 		case header.Hash() == next.hash:
 			log.Info("🔗 block reached canonical chain", "number", next.index, "hash", next.hash)
-
-      //TODO: remove this stuff now that bridge changed
-      // Now we can safely bridge eth to L1 without risk of reorg causing double spend
-      if set.l1BridgeEngine != nil {
-        block := set.chain.GetBlockByNumber(header.Number.Uint64())
-        log.Info("Block", "block", block)
-        if block == nil {
-          log.Error("Failed to retrieve block from L1", "number", next.index, "hash", next.hash)
-        }
-
-        for _, tx := range block.Transactions() {
-          // Check if tx is a bridge tx : ie sent to bridge account
-          if tx.To() != nil && *tx.To() == common.HexToAddress("0x505") {
-            // Get tx sender / from address
-            from, err := types.Sender(types.NewEIP155Signer(tx.ChainId()), tx)
-            if err != nil {
-              log.Error("Failed to retrieve tx sender", "number", next.index, "hash", next.hash)
-            }
-            log.Info("🔗 bridging eth to L1", "number", next.index, "hash", next.hash, "from", from, "to", tx.To(), "value", tx.Value())//, "sequencer", block.Coinbase())
-            set.l1BridgeEngine.L1BridgeComms.BridgeEthToL1(from, tx.Value())
-          }
-        }
-      }
 		default:
 			// Block is not canonical, check whether we have an uncle or a lost block
 			included := false
