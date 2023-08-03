@@ -27,7 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/event"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -276,7 +275,6 @@ func (bc *BlockChain) GetTd(hash common.Hash, number uint64) *big.Int {
 // HasState checks if state trie is fully present in the database or not.
 func (bc *BlockChain) HasState(hash common.Hash) bool {
 	_, err := bc.stateCache.OpenTrie(hash)
-  log.Info("Checking if HasState", "hash", hash, "contained", err == nil)
 	return err == nil
 }
 
@@ -322,7 +320,6 @@ func (bc *BlockChain) State() (*state.StateDB, error) {
 
 // StateAt returns a new mutable state based on a particular point in time.
 func (bc *BlockChain) StateAt(root common.Hash) (*state.StateDB, error) {
-  log.Info("Getting state at: ", "root", root, "hassate", bc.HasState(root))
 	return state.New(root, bc.stateCache, bc.snaps)
 }
 

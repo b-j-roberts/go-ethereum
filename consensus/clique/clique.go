@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -44,8 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
 	"golang.org/x/crypto/sha3"
-
-	l2utils "github.com/b-j-roberts/MyBlockchains/naive-blockchain/naive-cryptocurrency-l2/src/utils"
 )
 
 const (
@@ -187,13 +184,11 @@ type Clique struct {
 
 	// The fields below are for testing only
 	fakeDiff bool // Skip difficulty verifications
-  L2BridgeContractAddress common.Address
 }
 
 // New creates a Clique proof-of-authority consensus engine with the initial
 // signers set to the ones provided by the user.
-//TODO: Use real backend?
-func New(config *params.CliqueConfig, db ethdb.Database, backend *ethclient.Client) *Clique {
+func New(config *params.CliqueConfig, db ethdb.Database) *Clique {
 	// Set any missing consensus parameters to their defaults
 	conf := *config
 	if conf.Epoch == 0 {
@@ -571,60 +566,8 @@ func (c *Clique) Prepare(chain consensus.ChainHeaderReader, header *types.Header
 
 // Finalize implements consensus.Engine. There is no post-transaction
 // consensus rules in clique, do nothing here.
-func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal, receipts []*types.Receipt) {
-
-  log.Info("Checking for L1 Bridge deposits")
-
-  //TODO: This is a hack, but it will allow the chain to continue for now when bridge contract hasnt been setup
-  l2ContractAddresses := l2utils.CreateL2ContractAddressConfig(c.config.ContractsPath)
-  for _, receipt := range receipts {
-    eventSignature := crypto.Keccak256Hash([]byte("EthDeposited(uint256,address,uint256)"))
-    for _, receiptLog := range receipt.Logs {
-      // Check if this is a deposit log
-      //TODO: THis is entirely separate, but think about how it would be possible to completely verify the chain with only data available on L1 ( roots every so often blocks & tx data , how would people know which blocks had which transactions, ...? )
-      if bytes.Equal(receiptLog.Topics[0].Bytes(), eventSignature.Bytes()) && common.HexToAddress(receiptLog.Address.Hex()) == l2ContractAddresses.BridgeContractAddress {
-        log.Info("Unpacking Eth Dep")
-        // TEMP: Add balance to state
-        nonce, addr, amount, err := UnpackEthDeposited(*receiptLog)
-        if err != nil {
-          log.Error("Error unpacking EthDeposited event", "err", err)
-          return
-        }
-
-        log.Info("Unpacked Eth Dep", "nonce", nonce, "addr", addr.Hex(), "amount", amount)
-
-        // Compare if nonce is greater than engine nonce ( comparing 2 big ints )
-        if state.GetNonce(common.HexToAddress("0x505")) < nonce.Uint64() {
-          if state.GetNonce(common.HexToAddress("0x505")) + 1 != nonce.Uint64() {
-            log.Error("Nonce is not correct", "state", state.GetNonce(common.HexToAddress("0x505")), "nonce", nonce.Uint64())
-            return
-          }
-
-          log.Info("Bridging Eth to L2", "to", addr.Hex(), "amount", amount, "nonce", nonce.Uint64())
-          // Update nonce
-          state.AddBalance(addr, amount)
-          state.SetNonce(common.HexToAddress("0x505"), nonce.Uint64())
-        }
-      }
-    }
-  }
-}
-
-func UnpackEthDeposited(receiptLog types.Log) (nonce *big.Int, addr common.Address, amount *big.Int, err error) {
-    data := receiptLog.Data
-    if len(data) < 10 {
-        err = fmt.Errorf("invalid data")
-        return
-    }
-
-    offset := 12
-    nonce = new(big.Int).SetBytes(data[:32])
-    addr = common.BytesToAddress(data[32:52+offset])
-    amount = new(big.Int).SetBytes(data[52+offset:84+offset])
-    log.Info("Unpacked Eth Deposit", "nonce", nonce, "addr", addr, "amount", amount)
-
-
-    return
+func (c *Clique) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+	// No block rewards in PoA, so the state remains as is
 }
 
 // FinalizeAndAssemble implements consensus.Engine, ensuring no uncles are set,
@@ -633,19 +576,12 @@ func (c *Clique) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *
 	if len(withdrawals) > 0 {
 		return nil, errors.New("clique does not support withdrawals")
 	}
-
 	// Finalize block
-	c.Finalize(chain, header, state, txs, uncles, nil, receipts)
+	c.Finalize(chain, header, state, txs, uncles, nil)
 
-  return c.Assemble(chain, state, header, txs, uncles, receipts)
-}
-
-func (c *Clique) Assemble(chain consensus.ChainHeaderReader,state *state.StateDB, header *types.Header, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt) (*types.Block, error) {
-  // Set balance of bridge contract to 0 ( so we don't double count )
-  // state.SetBalance(common.HexToAddress("0x0"), big.NewInt(0)) //TODO: To finalize w/ receipt?
-  state.SetBalance(common.HexToAddress("0x505"), big.NewInt(0))
 	// Assign the final state root to header.
 	header.Root = state.IntermediateRoot(chain.Config().IsEIP158(header.Number))
+
 	// Assemble and return the final block for sealing.
 	return types.NewBlock(header, txs, nil, receipts, trie.NewStackTrie(nil)), nil
 }

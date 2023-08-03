@@ -356,9 +356,7 @@ func ServiceGetStorageRangesQuery(chain *core.BlockChain, req *GetStorageRangesP
 		proofs [][]byte
 		size   uint64
 	)
-  log.Info("ServiceGetStorageRangesQuery", "req", req)
 	for _, account := range req.Accounts {
-    log.Info("ServiceGetStorageRangesQuery", "account", account)
 		// If we've exceeded the requested data limit, abort without opening
 		// a new storage range (that we'd need to prove due to exceeded size)
 		if size >= req.Bytes {
@@ -494,7 +492,6 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 	accTrie, err := trie.NewStateTrie(trie.StateTrieID(req.Root), triedb)
 	if err != nil {
 		// We don't have the requested state available, bail out
-    log.Warn("Failed to create account trie", "err", err)
 		return nil, nil
 	}
 	// The 'snap' might be nil, in which case we cannot serve storage slots.
@@ -525,7 +522,6 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 			var stRoot common.Hash
 			// Storage slots requested, open the storage trie and retrieve from there
 			if snap == nil {
-        log.Warn("Storage trie requested, but no snapshot available", "root", req.Root)
 				// We don't have the requested state snapshotted yet (or it is stale),
 				// but can look up the account via the trie instead.
 				account, err := accTrie.GetAccountByHash(common.BytesToHash(pathset[0]))
@@ -536,7 +532,6 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 				stRoot = account.Root
 			} else {
 				account, err := snap.Account(common.BytesToHash(pathset[0]))
-        log.Info("Storage snap not nill : Account", "account", account)
 				loads++ // always account database reads, even for failures
 				if err != nil || account == nil {
 					break
